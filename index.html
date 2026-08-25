@@ -78,9 +78,34 @@ function check(days, weekStart, EQ) {
   }
   const b2b=[];
   for (let i=-1;i<7;i++){ const a=shift(weekStart,i), b=shift(weekStart,i+1); if(on(a)&&on(b)) b2b.push(b); }
-  let run=0,best=0;
-  week.forEach(d=>{ if(on(d)) run=0; else { run++; best=Math.max(best,run);} });
+  /* longest dry run — scanned across week boundaries, not boxed into the
+     displayed week. Any maximal dry stretch that touches this week counts. */
+  let best=0, run=0, runDays=[];
+  for (let i=-7;i<=13;i++){
+    const d = shift(weekStart,i);
+    if (on(d)) { run=0; runDays=[]; }
+    else {
+      run++; runDays.push(d);
+      if (runDays.some(x=>week.includes(x))) best = Math.max(best, run);
+    }
+  }
   const overCap = week.filter(d=>{ const p=days[d]; return p && p.cap > (p.dosed?EQ.C:EQ.C_UNDOSED); });
+
+  const dayName = d => label(d,{weekday:"short"}).split(",")[0];
+  const reasons = [];
+  if (maxDays > EQ.D)
+    reasons.push("That's "+maxDays+" drinking days inside a 7-day stretch. You said "+EQ.D+".");
+  if (maxDrinks > EQ.V)
+    reasons.push(maxDrinks+" drinks across 7 days. The ceiling is "+EQ.V+".");
+  overCap.forEach(d=>{
+    const p = days[d];
+    reasons.push(dayName(d)+" is set to "+p.cap+", but you're not dosed — the cap is "+EQ.C_UNDOSED+" without it.");
+  });
+  b2b.forEach(d=>{
+    reasons.push(dayName(shift(d,-1))+" and "+dayName(d)+" are back-to-back. Put a dry day between them.");
+  });
+  if (best < EQ.R)
+    reasons.push("Your longest dry stretch is "+best+" day"+(best===1?"":"s")+". You need "+EQ.R+" in a row — move one of these further apart.");
 
   return {
     days:  {ok:maxDays<=EQ.D,   val:maxDays,   max:EQ.D, name:EQ.D+" days"},
@@ -88,7 +113,7 @@ function check(days, weekStart, EQ) {
     cap:   {ok:overCap.length===0, val:overCap.length,   name:EQ.C+" max · "+EQ.C_UNDOSED+" undosed"},
     gap:   {ok:b2b.length===0,     val:b2b.length,       name:"No back-to-back"},
     run:   {ok:best>=EQ.R,      val:best,      max:EQ.R, name:EQ.R+"-day dry run"},
-    b2b, overCap,
+    b2b, overCap, reasons,
     valid: maxDays<=EQ.D && maxDrinks<=EQ.V && !overCap.length && !b2b.length && best>=EQ.R,
   };
 }
@@ -262,8 +287,15 @@ function App() {
             </div>
           ))}
         </div>
-        {!rules.valid && <div style={{background:C.err,color:C.ground,fontSize:9.5,letterSpacing:"0.14em",
-          textTransform:"uppercase",padding:"6px 14px",fontWeight:700}}>This week doesn't work</div>}
+        {!rules.valid && (
+          <div style={{background:C.err,color:C.ground,padding:"9px 14px 11px"}}>
+            <div style={{fontSize:9.5,letterSpacing:"0.14em",textTransform:"uppercase",fontWeight:700}}>
+              This week doesn't work</div>
+            {rules.reasons.map((r,i)=>(
+              <div key={i} style={{fontSize:10.5,lineHeight:1.6,marginTop:6,letterSpacing:"0.01em"}}>{r}</div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={{padding:14,display:"flex",flexDirection:"column",gap:12}}>
