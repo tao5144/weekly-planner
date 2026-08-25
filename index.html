@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>Planner</title>
+
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Planner" />
+<meta name="theme-color" content="#0D1519" />
+<meta name="robots" content="noindex, nofollow, noarchive, noimageindex" />
+<meta name="referrer" content="no-referrer" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' fill='%230D1519'/%3E%3Cline x1='34' y1='78' x2='34' y2='102' stroke='%2368808C' stroke-width='3'/%3E%3Cline x1='146' y1='78' x2='146' y2='102' stroke='%2368808C' stroke-width='3'/%3E%3Cline x1='34' y1='90' x2='146' y2='90' stroke='%235FA9DA' stroke-width='5'/%3E%3Cg stroke='%23C7D5DD' stroke-width='4'%3E%3Cline x1='27' y1='99' x2='41' y2='81'/%3E%3Cline x1='64' y1='99' x2='78' y2='81'/%3E%3Cline x1='102' y1='99' x2='116' y2='81'/%3E%3Cline x1='139' y1='99' x2='153' y2='81'/%3E%3C/g%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230D1519'/%3E%3Cline x1='6' y1='16' x2='26' y2='16' stroke='%235FA9DA' stroke-width='2'/%3E%3C/svg%3E" />
+<link rel="manifest" href='data:application/manifest+json,{"name":"Planner","short_name":"Planner","display":"standalone","background_color":"%230D1519","theme_color":"%230D1519","start_url":"./"}' />
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body, #root { margin:0; padding:0; background:#0D1519; min-height:100%; }
+  body { -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }
+  button, input { font: inherit; }
+  button:focus-visible, input:focus-visible { outline: 2px solid #5FA9DA; outline-offset: 2px; }
+  input::placeholder { color:#68808C; opacity:1; }
+  @media (prefers-reduced-motion: reduce) { * { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
+</style>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+/* ────────────────────────────────────────────────────────────
+   No personal data in this file. Everything you enter is stored
+   in this device's local storage and is never transmitted.
+   ──────────────────────────────────────────────────────────── */
+const { useState, useEffect, useCallback, useMemo } = React;
+
+const C = { ground:"#0D1519", panel:"#151F25", rule:"#22303A",
+            ink:"#C7D5DD", dim:"#68808C", cyan:"#5FA9DA", amber:"#E6B04A", err:"#CE5A4D" };
+const M = "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace";
+
+const DEFAULTS = { D:2, V:5, C:3, C_UNDOSED:2, R:3 };
+const KEY = "planner";
+const RISKS = ["LOW","MOD","HIGH","MAX"];
+
+const SCRIPTS = [
+  ["Drink offered, you're not drinking", "Sparkling water with lime."],
+  ["Another round ordered", "I'm good — switching to soda water."],
+  ["Why aren't you drinking?", "Taking a break. Feeling better for it."],
+  ["Hotel room, end of a long day", "Gym or a walk, then call home."],
+  ["Craving at the house", "15-minute timer. Walk outside. Nothing's here anyway."],
+];
+
+const iso = d => { const x=new Date(d);
+  return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0"); };
+const shift = (d,n) => { const x=new Date(d+"T12:00:00"); x.setDate(x.getDate()+n); return iso(x); };
+const monday = d => shift(d, -((new Date(d+"T12:00:00").getDay()+6)%7));
+const label = (d,o={}) => new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",...o});
+const DOW = ["M","T","W","T","F","S","S"];
+
+/* ─── rules engine ─────────────────────────────── */
+function check(days, weekStart, EQ) {
+  const week = Array.from({length:7},(_,i)=>shift(weekStart,i));
+  const on = d => !!days[d];
+  const drinks = d => (days[d] && days[d].cap) || 0;
+
+  let maxDays=0, maxDrinks=0;
+  for (let i=-6;i<=0;i++) for (let j=0;j<7;j++) {
+    const win = Array.from({length:7},(_,k)=>shift(shift(weekStart,j+i),k));
+    if (!win.some(d=>week.includes(d))) continue;
+    maxDays = Math.max(maxDays, win.filter(on).length);
+    maxDrinks = Math.max(maxDrinks, win.reduce((s,d)=>s+drinks(d),0));
+  }
+  const b2b=[];
+  for (let i=-1;i<7;i++){ const a=shift(weekStart,i), b=shift(weekStart,i+1); if(on(a)&&on(b)) b2b.push(b); }
+  let run=0,best=0;
+  week.forEach(d=>{ if(on(d)) run=0; else { run++; best=Math.max(best,run);} });
+  const overCap = week.filter(d=>{ const p=days[d]; return p && p.cap > (p.dosed?EQ.C:EQ.C_UNDOSED); });
+
+  return {
+    days:  {ok:maxDays<=EQ.D,   val:maxDays,   max:EQ.D, name:EQ.D+" days"},
+    drinks:{ok:maxDrinks<=EQ.V, val:maxDrinks, max:EQ.V, name:EQ.V+" drinks"},
+    cap:   {ok:overCap.length===0, val:overCap.length,   name:EQ.C+" max · "+EQ.C_UNDOSED+" undosed"},
+    gap:   {ok:b2b.length===0,     val:b2b.length,       name:"No back-to-back"},
+    run:   {ok:best>=EQ.R,      val:best,      max:EQ.R, name:EQ.R+"-day dry run"},
+    b2b, overCap,
+    valid: maxDays<=EQ.D && maxDrinks<=EQ.V && !overCap.length && !b2b.length && best>=EQ.R,
+  };
+}
+
+function solve(weekStart, outside, EQ) {
+  const week = Array.from({length:7},(_,i)=>shift(weekStart,i));
+  const out=[];
+  for (let i=0;i<7;i++) for (let j=i+1;j<7;j++) {
+    for (const [a,b] of [[EQ.C,EQ.V-EQ.C],[EQ.V-EQ.C,EQ.C],[2,2],[EQ.C,0]]) {
+      if (a+b>EQ.V || a<1 || a>EQ.C || b>EQ.C || b<0) continue;
+      const trial = Object.assign({}, outside);
+      trial[week[i]] = {cap:a,dosed:true};
+      if (b>0) trial[week[j]] = {cap:b,dosed:true};
+      if (check(trial,weekStart,EQ).valid)
+        out.push({days: b>0?[week[i],week[j]]:[week[i]], caps: b>0?[a,b]:[a]});
+      break;
+    }
+  }
+  return out.slice(0,6);
+}
+
+/* ─── dimension string ─────────────────────────── */
+function Dim({cap,actual,w=300}) {
+  const over=Math.max(0,actual-cap), total=Math.max(cap+over,1);
+  const P=16,Y=32,seg=(w-P*2)/total,capX=P+seg*cap;
+  const tone = over?C.err:actual>=cap?C.amber:C.cyan;
+  return (
+    <svg viewBox={"0 0 "+w+" 56"} style={{width:"100%",height:"auto",display:"block"}} aria-label={actual+" of "+cap}>
+      <line x1={P} y1={Y-10} x2={P} y2={Y+10} stroke={C.dim} strokeWidth="1"/>
+      <line x1={capX} y1={Y-10} x2={capX} y2={Y+10} stroke={over?C.err:C.dim} strokeWidth="1.5"/>
+      <line x1={P} y1={Y} x2={w-P} y2={Y} stroke={C.rule} strokeWidth="1"/>
+      {actual>0 && <line x1={P} y1={Y} x2={P+seg*actual} y2={Y} stroke={tone} strokeWidth="2.5"/>}
+      {Array.from({length:total+1}).map((_,i)=>{const x=P+seg*i;return(
+        <line key={i} x1={x-3.5} y1={Y+4.5} x2={x+3.5} y2={Y-4.5}
+          stroke={i>cap?C.err:i<=actual?C.ink:C.dim} strokeWidth="1.25"/>);})}
+      <text x={P+(capX-P)/2} y={Y-15} textAnchor="middle" fill={over?C.err:C.ink}
+        fontSize="10.5" fontFamily={M} letterSpacing="1.6">{actual} / {cap}</text>
+    </svg>
+  );
+}
+
+const Eye = ({children,c=C.dim}) => <div style={{fontFamily:M,fontSize:9.5,letterSpacing:"0.22em",color:c,textTransform:"uppercase"}}>{children}</div>;
+const Panel = ({children,s={}}) => <div style={Object.assign({background:C.panel,border:"1px solid "+C.rule,padding:17},s)}>{children}</div>;
+const field = {width:"100%",padding:"8px 10px",background:C.ground,border:"1px solid "+C.rule,
+  color:C.ink,fontFamily:M,fontSize:11,letterSpacing:"0.03em",outline:"none",borderRadius:0};
+const ghost = {padding:"12px 0",background:"transparent",border:"1px solid "+C.rule,color:C.ink,
+  fontFamily:M,fontSize:9,letterSpacing:"0.14em",textTransform:"uppercase",cursor:"pointer"};
+
+function Craving({close}) {
+  const [left,setLeft]=useState(900);
+  useEffect(()=>{if(left<=0)return;const t=setTimeout(()=>setLeft(s=>s-1),1000);return()=>clearTimeout(t);},[left]);
+  const done=left<=0;
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(13,21,25,.98)",zIndex:60,display:"flex",
+      flexDirection:"column",alignItems:"center",justifyContent:"center",padding:28}}>
+      <Eye>{done?"It passed":"Wait it out"}</Eye>
+      <div style={{fontFamily:M,fontSize:64,color:done?C.cyan:C.ink,margin:"18px 0 10px",
+        fontVariantNumeric:"tabular-nums",letterSpacing:"0.04em"}}>
+        {String(Math.floor(left/60)).padStart(2,"0")}:{String(left%60).padStart(2,"0")}</div>
+      <p style={{color:C.dim,fontFamily:M,fontSize:11,lineHeight:1.95,textAlign:"center",maxWidth:290,letterSpacing:"0.04em"}}>
+        {done?"That's the whole thing. It peaked and it left."
+             :"Stand up. Walk. Refill your water. Don't negotiate with it — let the clock run."}</p>
+      <button onClick={close} style={{marginTop:30,padding:"13px 34px",background:"transparent",
+        border:"1px solid "+C.rule,color:C.ink,fontFamily:M,fontSize:9.5,letterSpacing:"0.2em",
+        textTransform:"uppercase",cursor:"pointer"}}>Close</button>
+    </div>
+  );
+}
+
+/* ═══ app ══════════════════════════════════════ */
+function App() {
+  const today = iso(new Date());
+  const [tab,setTab]=useState("plan");
+  const [plan,setPlan]=useState({});
+  const [log,setLog]=useState({});
+  const [trips,setTrips]=useState([]);
+  const [EQ,setEQ]=useState(DEFAULTS);
+  const [wk,setWk]=useState(monday(today));
+  const [ready,setReady]=useState(false);
+  const [craving,setCraving]=useState(false);
+  const [scripts,setScripts]=useState(false);
+  const [suggest,setSuggest]=useState(false);
+  const [addTrip,setAddTrip]=useState(false);
+  const [draft,setDraft]=useState({name:"",start:today,end:today,risk:"MOD"});
+  const [toast,setToast]=useState("");
+
+  const flash = m => { setToast(m); setTimeout(()=>setToast(""),3500); };
+
+  useEffect(()=>{
+    try { const raw=localStorage.getItem(KEY);
+      if(raw){ const d=JSON.parse(raw);
+        setPlan(d.plan||{}); setLog(d.log||{}); setTrips(d.trips||[]);
+        setEQ(Object.assign({},DEFAULTS,d.EQ||{})); }
+    } catch(e){ console.error("Couldn't read saved data",e); }
+    setReady(true);
+  },[]);
+
+  const save = useCallback((p,l,t,e)=>{
+    try { localStorage.setItem(KEY, JSON.stringify({plan:p,log:l,trips:t,EQ:e,saved:new Date().toISOString()})); }
+    catch(err){ flash("Couldn't save — storage may be full"); }
+  },[]);
+  const commit = (p=plan,l=log,t=trips,e=EQ) => { setPlan(p);setLog(l);setTrips(t);setEQ(e); save(p,l,t,e); };
+
+  const week = useMemo(()=>Array.from({length:7},(_,i)=>shift(wk,i)),[wk]);
+  const rules = useMemo(()=>check(plan,wk,EQ),[plan,wk,EQ]);
+  const outside = useMemo(()=>{const o={};Object.keys(plan).forEach(d=>{if(!week.includes(d))o[d]=plan[d];});return o;},[plan,week]);
+  const options = useMemo(()=>suggest?solve(wk,outside,EQ):[],[suggest,wk,outside,EQ]);
+
+  const toggle = d => { const n=Object.assign({},plan);
+    if(n[d]) delete n[d]; else n[d]={cap:EQ.C,dosed:true,label:""}; commit(n); };
+  const setDay = (d,patch) => commit(Object.assign({},plan,{[d]:Object.assign({},plan[d],patch)}));
+  const apply = combo => { const n=Object.assign({},plan);
+    week.forEach(d=>{if(n[d]&&!log[d])delete n[d];});
+    combo.days.forEach((d,i)=>{n[d]={cap:combo.caps[i],dosed:true,label:""};});
+    commit(n); setSuggest(false); };
+
+  const entry = log[today]||{actual:0,dosed:false,alone:false,atHouse:false};
+  const tp = plan[today];
+  const upd = patch => commit(plan, Object.assign({},log,{[today]:Object.assign({},entry,patch)}));
+
+  const lastDrink = Object.keys(log).filter(d=>log[d].actual>0).sort().pop();
+  const dry = lastDrink ? Math.round((new Date(today+"T12:00:00")-new Date(lastDrink+"T12:00:00"))/864e5) : null;
+  const trip = d => trips.find(t=>d>=t.start&&d<=t.end);
+  const riskColor = r => r==="MAX"?C.err:r==="HIGH"?C.amber:r==="LOW"?C.cyan:C.dim;
+
+  const saveTrip = () => {
+    if(!draft.name.trim()) return flash("Give it a name");
+    if(draft.end<draft.start) return flash("End is before start");
+    commit(plan,log,[...trips,Object.assign({},draft,{id:Date.now()})].sort((a,b)=>a.start<b.start?-1:1));
+    setDraft({name:"",start:today,end:today,risk:"MOD"}); setAddTrip(false);
+  };
+
+  const backup = () => {
+    const blob=new Blob([JSON.stringify({plan,log,trips,EQ},null,2)],{type:"application/json"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+    a.download="planner-backup-"+today+".json"; a.click(); URL.revokeObjectURL(a.href);
+  };
+  const restore = e => { const f=e.target.files[0]; if(!f)return;
+    const r=new FileReader();
+    r.onload=()=>{ try{ const d=JSON.parse(r.result);
+      commit(d.plan||{}, d.log||{}, d.trips||[], Object.assign({},DEFAULTS,d.EQ||{})); flash("Restored");
+    }catch(err){ flash("That file didn't parse"); } };
+    r.readAsText(f); e.target.value="";
+  };
+  const wipe = () => { if(!confirm("Erase everything on this device? This cannot be undone."))return;
+    localStorage.removeItem(KEY); commit({},{},[],DEFAULTS); flash("Erased"); };
+
+  if(!ready) return <div style={{minHeight:"100vh",background:C.ground,display:"grid",placeItems:"center"}}><Eye>Loading</Eye></div>;
+  const RULE_ITEMS=[rules.days,rules.drinks,rules.cap,rules.gap,rules.run];
+
+  return (
+    <div style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:M,
+      paddingBottom:"calc(76px + env(safe-area-inset-bottom))"}}>
+      {craving && <Craving close={()=>setCraving(false)}/>}
+      {toast && <div style={{position:"fixed",top:"calc(12px + env(safe-area-inset-top))",left:14,right:14,
+        zIndex:70,background:C.amber,color:C.ground,padding:"11px 14px",fontSize:10,letterSpacing:"0.12em",
+        textTransform:"uppercase",fontWeight:700,textAlign:"center"}}>{toast}</div>}
+
+      {/* RULES BAND */}
+      <div style={{position:"sticky",top:0,zIndex:20,background:C.ground,paddingTop:"env(safe-area-inset-top)",
+        borderBottom:"1px solid "+(rules.valid?C.rule:C.err)}}>
+        <div style={{padding:"13px 14px 11px",display:"flex",gap:5}}>
+          {RULE_ITEMS.map((r,i)=>(
+            <div key={i} style={{flex:1,borderTop:"2px solid "+(r.ok?C.rule:C.err),paddingTop:7}}>
+              <div style={{fontSize:13,color:r.ok?C.ink:C.err}}>
+                {(i===2||i===3)?(r.ok?"OK":r.val):r.val}
+                {(i===0||i===1)&&<span style={{fontSize:9,color:C.dim}}>/{r.max}</span>}
+              </div>
+              <div style={{fontSize:7.5,color:r.ok?C.dim:C.err,letterSpacing:"0.09em",
+                textTransform:"uppercase",marginTop:3,lineHeight:1.35}}>{r.name}</div>
+            </div>
+          ))}
+        </div>
+        {!rules.valid && <div style={{background:C.err,color:C.ground,fontSize:9.5,letterSpacing:"0.14em",
+          textTransform:"uppercase",padding:"6px 14px",fontWeight:700}}>This week doesn't work</div>}
+      </div>
+
+      <div style={{padding:14,display:"flex",flexDirection:"column",gap:12}}>
+
+        {/* PLAN */}
+        {tab==="plan" && (<React.Fragment>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <button onClick={()=>setWk(shift(wk,-7))} aria-label="Previous week"
+              style={{background:"none",border:"none",color:C.dim,fontFamily:M,fontSize:15,cursor:"pointer",padding:"4px 10px"}}>←</button>
+            <div style={{fontSize:10,letterSpacing:"0.16em"}}>{label(wk).toUpperCase()} — {label(shift(wk,6)).toUpperCase()}</div>
+            <button onClick={()=>setWk(shift(wk,7))} aria-label="Next week"
+              style={{background:"none",border:"none",color:C.dim,fontFamily:M,fontSize:15,cursor:"pointer",padding:"4px 10px"}}>→</button>
+          </div>
+
+          <div style={{display:"flex",gap:4}}>
+            {week.map((d,i)=>{
+              const p=plan[d], t=trip(d), bad=rules.b2b.includes(d)||rules.overCap.includes(d);
+              return (
+                <button key={d} onClick={()=>toggle(d)} style={{flex:1,padding:"9px 2px 11px",cursor:"pointer",
+                  background:p?(bad?C.err:C.cyan):"transparent",
+                  border:"1px solid "+(bad?C.err:p?C.cyan:d===today?C.ink:C.rule),
+                  color:p?C.ground:C.dim,fontFamily:M}}>
+                  <div style={{fontSize:8,letterSpacing:"0.1em",opacity:.85}}>{DOW[i]}</div>
+                  <div style={{fontSize:10,margin:"5px 0 4px",fontWeight:p?700:400}}>{d.slice(8)}</div>
+                  <div style={{fontSize:13,fontWeight:700,minHeight:17}}>{p?p.cap:"·"}</div>
+                  {t && <div style={{fontSize:7,marginTop:3,color:p?C.ground:riskColor(t.risk)}}>✈</div>}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{fontSize:9,color:C.dim,letterSpacing:"0.06em",textAlign:"center",marginTop:-4}}>
+            Tap a day to plan a drinking night
+          </div>
+
+          {[...new Set(week.map(trip).filter(Boolean))].map(t=>(
+            <div key={t.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 11px",
+              border:"1px dashed "+C.rule,fontSize:9.5,letterSpacing:"0.1em"}}>
+              <span style={{color:C.dim}}>{t.name.toUpperCase()}</span>
+              <span style={{color:riskColor(t.risk)}}>{t.risk}</span>
+            </div>
+          ))}
+
+          {week.filter(d=>plan[d]).map(d=>{
+            const p=plan[d], max=p.dosed?EQ.C:EQ.C_UNDOSED;
+            return (
+              <Panel key={d} s={{borderColor:(rules.b2b.includes(d)||rules.overCap.includes(d))?C.err:C.rule}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+                  <div style={{fontSize:11,letterSpacing:"0.08em"}}>{label(d,{weekday:"short"}).toUpperCase()}</div>
+                  <button onClick={()=>toggle(d)} style={{background:"none",border:"none",color:C.dim,
+                    fontFamily:M,fontSize:8.5,letterSpacing:"0.14em",cursor:"pointer"}}>REMOVE</button>
+                </div>
+                <input value={p.label||""} onChange={e=>setDay(d,{label:e.target.value})}
+                  placeholder="What is it?" style={Object.assign({},field,{marginTop:9})}/>
+                <div style={{display:"flex",gap:6,marginTop:9,alignItems:"center"}}>
+                  <div style={{display:"flex",gap:4}}>
+                    {Array.from({length:EQ.C},(_,k)=>k+1).map(n=>(
+                      <button key={n} onClick={()=>setDay(d,{cap:n})} disabled={n>max} style={{width:36,padding:"9px 0",
+                        cursor:n>max?"not-allowed":"pointer",background:p.cap===n?C.cyan:"transparent",
+                        border:"1px solid "+(p.cap===n?C.cyan:C.rule),
+                        color:p.cap===n?C.ground:n>max?C.err:C.dim,
+                        fontFamily:M,fontSize:11,fontWeight:p.cap===n?700:400,opacity:n>max?.4:1}}>{n}</button>
+                    ))}
+                  </div>
+                  <button onClick={()=>setDay(d,{dosed:!p.dosed,cap:Math.min(p.cap,p.dosed?EQ.C_UNDOSED:EQ.C)})}
+                    style={{flex:1,padding:"9px 0",background:p.dosed?C.cyan:"transparent",
+                      border:"1px solid "+(p.dosed?C.cyan:C.amber),color:p.dosed?C.ground:C.amber,
+                      fontFamily:M,fontSize:9,letterSpacing:"0.13em",textTransform:"uppercase",
+                      cursor:"pointer",fontWeight:p.dosed?700:400}}>
+                    {p.dosed?"Dosed":"Not dosed · cap "+EQ.C_UNDOSED}</button>
+                </div>
+              </Panel>
+            );
+          })}
+
+          <button onClick={()=>setSuggest(s=>!s)} style={Object.assign({},ghost,{padding:"14px 0",fontSize:9.5,letterSpacing:"0.17em"})}>
+            {suggest?"Hide options":"Show me what's legal"}</button>
+
+          {suggest && (
+            <Panel>
+              {!options.length ? (
+                <div style={{fontSize:10.5,color:C.dim,lineHeight:1.9,letterSpacing:"0.04em"}}>
+                  Nothing fits. Days locked in the weeks either side are using up the allowance — clear one and try again.
+                </div>
+              ) : options.map((o,i)=>(
+                <button key={i} onClick={()=>apply(o)} style={{display:"flex",justifyContent:"space-between",
+                  alignItems:"center",width:"100%",padding:"12px 0",background:"none",border:"none",
+                  borderTop:i?"1px solid "+C.rule:"none",cursor:"pointer",fontFamily:M}}>
+                  <span style={{fontSize:11,color:C.ink,letterSpacing:"0.05em"}}>
+                    {o.days.map(d=>label(d,{weekday:"short"}).toUpperCase()).join("  ·  ")}</span>
+                  <span style={{fontSize:10,color:C.cyan,letterSpacing:"0.1em"}}>
+                    {o.caps.join("+")} = {o.caps.reduce((a,b)=>a+b,0)}</span>
+                </button>
+              ))}
+            </Panel>
+          )}
+        </React.Fragment>)}
+
+        {/* TONIGHT */}
+        {tab==="tonight" && (<React.Fragment>
+          {!tp ? (
+            <Panel s={{padding:"36px 18px",textAlign:"center"}}>
+              <Eye>Tonight</Eye>
+              <div style={{fontSize:38,letterSpacing:"0.16em",margin:"16px 0 8px",fontWeight:700}}>DRY</div>
+              <div style={{fontSize:10.5,color:C.dim,letterSpacing:"0.08em"}}>
+                {dry===null?"No drinks logged yet":dry+" days since the last drink"}</div>
+            </Panel>
+          ) : (
+            <Panel>
+              <Eye c={C.cyan}>Planned tonight</Eye>
+              <div style={{fontSize:13,letterSpacing:"0.04em",margin:"9px 0 2px"}}>{tp.label||"Drinking day"}</div>
+              {!tp.dosed && <div style={{fontSize:9.5,color:C.amber,letterSpacing:"0.08em"}}>NOT DOSED — CAP IS {EQ.C_UNDOSED}</div>}
+              <div style={{margin:"16px 0 4px"}}><Dim cap={tp.cap} actual={entry.actual}/></div>
+              <div style={{display:"flex",gap:7,marginTop:12}}>
+                <button onClick={()=>upd({actual:Math.max(0,entry.actual-1)})} aria-label="Remove a drink"
+                  style={{width:52,padding:"15px 0",background:"transparent",border:"1px solid "+C.rule,
+                    color:C.dim,fontFamily:M,fontSize:15,cursor:"pointer"}}>−</button>
+                <button onClick={()=>upd({actual:entry.actual+1})} style={{flex:1,padding:"15px 0",
+                  background:entry.actual>=tp.cap?"transparent":C.cyan,
+                  border:"1px solid "+(entry.actual>=tp.cap?C.err:C.cyan),
+                  color:entry.actual>=tp.cap?C.err:C.ground,fontFamily:M,fontSize:9.5,
+                  letterSpacing:"0.17em",textTransform:"uppercase",fontWeight:700,cursor:"pointer"}}>
+                  {entry.actual>=tp.cap?"That's the cap":"Log a drink"}</button>
+              </div>
+              <div style={{display:"flex",gap:7,marginTop:7}}>
+                {[["Dosed","dosed",false],["Alone","alone",true],["At house","atHouse",true]].map(([l,k,danger])=>(
+                  <button key={k} onClick={()=>upd({[k]:!entry[k]})} style={{flex:1,padding:"12px 4px",
+                    background:entry[k]?(danger?C.err:C.cyan):"transparent",
+                    border:"1px solid "+(entry[k]?(danger?C.err:C.cyan):C.rule),
+                    color:entry[k]?C.ground:C.dim,fontFamily:M,fontSize:9,letterSpacing:"0.11em",
+                    textTransform:"uppercase",cursor:"pointer",fontWeight:entry[k]?700:400}}>{l}</button>
+                ))}
+              </div>
+              {(entry.alone||entry.atHouse) && (
+                <div style={{marginTop:11,padding:12,border:"1px solid "+C.err,fontSize:10,color:C.err,
+                  lineHeight:1.85,letterSpacing:"0.03em"}}>
+                  Rule broken. This one matters more than the count — it's the one that predicts the rest coming apart.
+                </div>
+              )}
+            </Panel>
+          )}
+          <div style={{display:"flex",gap:9}}>
+            <button onClick={()=>setCraving(true)} style={Object.assign({},ghost,{flex:1,padding:"15px 0",fontSize:9.5,letterSpacing:"0.15em"})}>Craving · 15 min</button>
+            <button onClick={()=>setScripts(s=>!s)} style={Object.assign({},ghost,{flex:1,padding:"15px 0",fontSize:9.5,letterSpacing:"0.15em"})}>What to say</button>
+          </div>
+          {scripts && (
+            <Panel>
+              {SCRIPTS.map(([t,r],i)=>(
+                <div key={i} style={{padding:"11px 0",borderTop:i?"1px solid "+C.rule:"none"}}>
+                  <div style={{fontSize:8.5,color:C.dim,letterSpacing:"0.13em",textTransform:"uppercase",marginBottom:5}}>{t}</div>
+                  <div style={{fontSize:11.5,color:C.cyan,letterSpacing:"0.03em"}}>“{r}”</div>
+                </div>
+              ))}
+            </Panel>
+          )}
+        </React.Fragment>)}
+
+        {/* LOG */}
+        {tab==="log" && (<React.Fragment>
+          <Panel>
+            <div style={{display:"flex",gap:22}}>
+              <div><Eye>Dry run</Eye><div style={{fontSize:24,marginTop:5,color:C.cyan}}>{dry===null?"—":dry}<span style={{fontSize:11,color:C.dim}}> d</span></div></div>
+              <div><Eye>Logged</Eye><div style={{fontSize:24,marginTop:5}}>{Object.keys(log).length}</div></div>
+              <div><Eye>Broken</Eye><div style={{fontSize:24,marginTop:5,
+                color:Object.values(log).some(e=>e.alone||e.atHouse)?C.err:C.ink}}>
+                {Object.values(log).filter(e=>e.alone||e.atHouse).length}</div></div>
+            </div>
+          </Panel>
+          <Panel>
+            <Eye>History</Eye>
+            {!Object.keys(log).length ? (
+              <div style={{fontSize:10.5,color:C.dim,marginTop:13,lineHeight:1.9,letterSpacing:"0.04em"}}>
+                Nothing logged yet. Every occasion goes in the same night — not the next morning.</div>
+            ) : Object.keys(log).sort().reverse().map(d=>{
+              const e=log[d], p=plan[d], bad=e.alone||e.atHouse||e.actual>((p&&p.cap)||0);
+              return (
+                <div key={d} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"12px 0",borderTop:"1px solid "+C.rule}}>
+                  <div>
+                    <div style={{fontSize:10.5,letterSpacing:"0.06em"}}>{label(d,{weekday:"short"}).toUpperCase()}</div>
+                    <div style={{fontSize:8.5,color:(e.alone||e.atHouse)?C.err:C.dim,marginTop:4,letterSpacing:"0.08em"}}>
+                      {[p&&p.label,e.dosed?"DOSED":e.actual>0?"NOT DOSED":null,e.alone&&"ALONE",e.atHouse&&"AT HOUSE"]
+                        .filter(Boolean).join(" · ")||"DRY"}</div>
+                  </div>
+                  <div style={{fontSize:17,color:bad?C.err:e.actual>0?C.ink:C.dim}}>{e.actual||"—"}</div>
+                </div>
+              );
+            })}
+          </Panel>
+        </React.Fragment>)}
+
+        {/* SETUP */}
+        {tab==="setup" && (<React.Fragment>
+          <Panel>
+            <Eye>The equation</Eye>
+            <div style={{marginTop:12}}>
+              {[["D","Drinking days per 7",1,4],["V","Drinks per 7",1,14],
+                ["C","Cap per occasion",1,6],["C_UNDOSED","Cap undosed",1,6],
+                ["R","Longest dry run",1,7]].map(([k,l,lo,hi])=>(
+                <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"11px 0",borderTop:"1px solid "+C.rule}}>
+                  <div style={{fontSize:10.5,letterSpacing:"0.04em"}}>{l}</div>
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <button onClick={()=>commit(plan,log,trips,Object.assign({},EQ,{[k]:Math.max(lo,EQ[k]-1)}))}
+                      style={{width:34,padding:"7px 0",background:"transparent",border:"1px solid "+C.rule,
+                        color:C.dim,fontFamily:M,fontSize:13,cursor:"pointer"}}>−</button>
+                    <div style={{width:26,textAlign:"center",fontSize:14,color:C.cyan}}>{EQ[k]}</div>
+                    <button onClick={()=>commit(plan,log,trips,Object.assign({},EQ,{[k]:Math.min(hi,EQ[k]+1)}))}
+                      style={{width:34,padding:"7px 0",background:"transparent",border:"1px solid "+C.rule,
+                        color:C.dim,fontFamily:M,fontSize:13,cursor:"pointer"}}>+</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+              <Eye>Trips</Eye>
+              <button onClick={()=>setAddTrip(a=>!a)} style={{background:"none",border:"none",color:C.cyan,
+                fontFamily:M,fontSize:9,letterSpacing:"0.14em",cursor:"pointer"}}>{addTrip?"CANCEL":"+ ADD"}</button>
+            </div>
+            {addTrip && (
+              <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.rule,display:"flex",flexDirection:"column",gap:8}}>
+                <input value={draft.name} onChange={e=>setDraft(Object.assign({},draft,{name:e.target.value}))}
+                  placeholder="Name it something only you'd recognize" style={field}/>
+                <div style={{display:"flex",gap:8}}>
+                  <input type="date" value={draft.start} onChange={e=>setDraft(Object.assign({},draft,{start:e.target.value}))} style={Object.assign({},field,{flex:1})}/>
+                  <input type="date" value={draft.end} onChange={e=>setDraft(Object.assign({},draft,{end:e.target.value}))} style={Object.assign({},field,{flex:1})}/>
+                </div>
+                <div style={{display:"flex",gap:5}}>
+                  {RISKS.map(r=>(
+                    <button key={r} onClick={()=>setDraft(Object.assign({},draft,{risk:r}))} style={{flex:1,padding:"9px 0",
+                      background:draft.risk===r?riskColor(r):"transparent",
+                      border:"1px solid "+(draft.risk===r?riskColor(r):C.rule),
+                      color:draft.risk===r?C.ground:C.dim,fontFamily:M,fontSize:9,
+                      letterSpacing:"0.1em",cursor:"pointer",fontWeight:draft.risk===r?700:400}}>{r}</button>
+                  ))}
+                </div>
+                <button onClick={saveTrip} style={{padding:"12px 0",background:C.cyan,border:"none",color:C.ground,
+                  fontFamily:M,fontSize:9,letterSpacing:"0.16em",textTransform:"uppercase",fontWeight:700,cursor:"pointer"}}>Save trip</button>
+              </div>
+            )}
+            {!trips.length && !addTrip && (
+              <div style={{fontSize:10,color:C.dim,marginTop:11,lineHeight:1.9,letterSpacing:"0.04em"}}>
+                No trips yet. Add the ones that matter — they'll show on the week view so you can see the pressure coming.
+              </div>
+            )}
+            {trips.map(t=>(
+              <div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                padding:"11px 0",borderTop:"1px solid "+C.rule}}>
+                <div>
+                  <div style={{fontSize:11,letterSpacing:"0.03em"}}>{t.name}</div>
+                  <div style={{fontSize:8.5,color:C.dim,marginTop:3,letterSpacing:"0.08em"}}>
+                    {label(t.start).toUpperCase()} – {label(t.end).toUpperCase()}</div>
+                </div>
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <span style={{fontSize:9,color:riskColor(t.risk),letterSpacing:"0.12em"}}>{t.risk}</span>
+                  <button onClick={()=>commit(plan,log,trips.filter(x=>x.id!==t.id))}
+                    style={{background:"none",border:"none",color:C.dim,fontFamily:M,fontSize:13,cursor:"pointer"}}>×</button>
+                </div>
+              </div>
+            ))}
+          </Panel>
+
+          <Panel>
+            <Eye c={C.amber}>Escalate, don't renegotiate</Eye>
+            <div style={{fontSize:10,color:C.dim,marginTop:10,lineHeight:2.05,letterSpacing:"0.04em"}}>
+              Cap blown twice → call the clinician<br/>
+              Score flat at the 4-week re-check → change the target<br/>
+              Any withdrawal symptom on a dry day → stop self-managing<br/>
+              Drinking alone even once → that's the tell
+            </div>
+          </Panel>
+
+          <Panel>
+            <Eye>This device only</Eye>
+            <div style={{fontSize:9.5,color:C.dim,marginTop:9,lineHeight:1.9,letterSpacing:"0.04em"}}>
+              Nothing you enter leaves this phone. There is no account and no server. Save a copy every few weeks — if this
+              gets deleted from your home screen, the data goes with it.
+            </div>
+            <div style={{display:"flex",gap:7,marginTop:12}}>
+              <button onClick={backup} style={Object.assign({},ghost,{flex:1})}>Save a copy</button>
+              <label style={Object.assign({},ghost,{flex:1,textAlign:"center"})}>
+                Restore<input type="file" accept="application/json,.json" onChange={restore} style={{display:"none"}}/>
+              </label>
+            </div>
+            <button onClick={wipe} style={{width:"100%",marginTop:7,padding:"12px 0",background:"transparent",
+              border:"1px solid "+C.err,color:C.err,fontFamily:M,fontSize:9,letterSpacing:"0.14em",
+              textTransform:"uppercase",cursor:"pointer"}}>Erase everything</button>
+          </Panel>
+        </React.Fragment>)}
+      </div>
+
+      <div style={{position:"fixed",bottom:0,left:0,right:0,background:C.panel,borderTop:"1px solid "+C.rule,
+        display:"flex",paddingBottom:"env(safe-area-inset-bottom)"}}>
+        {[["plan","Plan"],["tonight","Tonight"],["log","Log"],["setup","Setup"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"16px 0 18px",background:"none",border:"none",
+            borderTop:"2px solid "+(tab===k?C.cyan:"transparent"),color:tab===k?C.ink:C.dim,
+            fontFamily:M,fontSize:9,letterSpacing:"0.17em",textTransform:"uppercase",cursor:"pointer"}}>{l}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
