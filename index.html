@@ -222,6 +222,18 @@ function App() {
   const outside = useMemo(()=>{const o={};Object.keys(plan).forEach(d=>{if(!week.includes(d))o[d]=plan[d];});return o;},[plan,week]);
   const options = useMemo(()=>suggest?solve(wk,outside,EQ):[],[suggest,wk,outside,EQ]);
 
+  /* soonest date a drinking day could be added without breaking anything */
+  const nextOpen = useMemo(()=>{
+    for(let i=0;i<90;i++){
+      const d=shift(today,i);
+      if(plan[d]) continue;
+      const trial=Object.assign({},plan,{[d]:{cap:1,dosed:true}});
+      const w=monday(d);
+      if([shift(w,-7),w,shift(w,7)].every(ws=>check(trial,ws,EQ).valid)) return d;
+    }
+    return null;
+  },[plan,EQ,today]);
+
   const toggle = d => { const n=Object.assign({},plan);
     if(n[d]) delete n[d]; else n[d]={cap:EQ.C,dosed:true,label:""}; commit(n); };
   const setDay = (d,patch) => commit(Object.assign({},plan,{[d]:Object.assign({},plan[d],patch)}));
@@ -329,6 +341,25 @@ function App() {
           <div style={{fontSize:9,color:C.dim,letterSpacing:"0.06em",textAlign:"center",marginTop:-4}}>
             Tap a day to plan a drinking night
           </div>
+
+          {nextOpen ? (
+            <button onClick={()=>setWk(monday(nextOpen))} style={{padding:"11px 12px",background:"transparent",
+              border:"1px solid "+C.rule,cursor:"pointer",fontFamily:M,textAlign:"left",
+              display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:8.5,color:C.dim,letterSpacing:"0.15em",textTransform:"uppercase"}}>
+                Next open day</span>
+              <span style={{fontSize:11,color:C.cyan,letterSpacing:"0.05em"}}>
+                {nextOpen===today ? "Today"
+                  : label(nextOpen,{weekday:"short"}).toUpperCase()
+                    +"  ·  "+Math.round((new Date(nextOpen+"T12:00:00")-new Date(today+"T12:00:00"))/864e5)+"d"}
+              </span>
+            </button>
+          ) : (
+            <div style={{padding:"11px 12px",border:"1px solid "+C.amber,fontSize:10,color:C.amber,
+              letterSpacing:"0.04em",lineHeight:1.7}}>
+              No open day in the next 90 — clear something before adding more.
+            </div>
+          )}
 
           {[...new Set(week.map(trip).filter(Boolean))].map(t=>(
             <div key={t.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 11px",
